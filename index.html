@@ -1,225 +1,79 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Controle de Ausências, Férias e Painel Anual</title>
-<link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
-<style>
-body { font-family: Arial, sans-serif; margin:20px; text-align:center; }
-h1 { margin-bottom:10px; }
-#tabs { margin-bottom:10px; }
-.tab-button { padding:8px 15px; margin:0 5px; cursor:pointer; font-size:14px; }
-.active-tab { background-color:#3788d8; color:#fff; border-radius:4px; }
-#calendar-container { display:block; }
-#calendar { max-width:1000px; margin:20px auto; }
-button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
-.modal { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; overflow:auto; background-color:rgba(0,0,0,0.5);}
-.modal-content { background-color:#fefefe; margin:10% auto; padding:20px; border-radius:8px; width:320px; text-align:left; position:relative;}
-.close { position:absolute; top:10px; right:15px; font-size:20px; cursor:pointer; }
-.modal input, .modal select { width:100%; margin:5px 0 15px 0; padding:8px; box-sizing:border-box; }
-.modal button { width:100%; }
-#legend, #stats { max-width:900px; margin:10px auto; text-align:left; display:flex; flex-wrap:wrap; justify-content:center; }
-.legend-item { margin:5px 10px; display:flex; align-items:center; font-size:14px; }
-.color-box { width:15px; height:15px; margin-right:5px; border:1px solid #000; }
-
-/* Painel anual */
-#dashboardContainer { display:none; }
-#dashboard { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:1200px; margin:0 auto; }
-.calendar-mini { border:1px solid #ccc; border-radius:6px; padding:5px; background:#fafafa; }
-.month-title { font-weight:bold; background:#eee; border-radius:4px; padding:3px; margin-bottom:4px; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Site GitHub Pages</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+        nav a {
+            color: white;
+            text-decoration: none;
+            margin: 0 1rem;
+        }
+        main {
+            padding: 2rem;
+            max-width: 800px;
+            margin: auto;
+        }
+        footer {
+            background-color: #333;
+            color: white;
+            text-align: center;
+            padding: 1rem;
+            margin-top: 2rem;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
 </head>
 <body>
+    <header>
+        <h1>Bem-vindo ao Meu Site!</h1>
+        <nav>
+            <a href="#sobre">Sobre</a>
+            <a href="#contato">Contato</a>
+        </nav>
+    </header>
 
-<h1>Controle de Ausências, Férias e Painel Anual</h1>
+    <main>
+        <section id="sobre">
+            <h2>Sobre Mim</h2>
+            <p>Este é um exemplo de site hospedado no GitHub Pages. Você pode editar este conteúdo e personalizar seu site como quiser.</p>
+        </section>
 
-<div id="tabs">
-  <button class="tab-button active-tab" id="tabAusencias">Ausências</button>
-  <button class="tab-button" id="tabFerias">Férias</button>
-  <button class="tab-button" id="tabDashboard">Painel Anual</button>
-</div>
+        <section id="contato">
+            <h2>Contato</h2>
+            <p>Envie um e-mail para <a href="mailto:meuemail@example.com">meuemail@example.com</a></p>
+            <button onclick="alert('Obrigado pelo contato!')">Clique Aqui</button>
+        </section>
+    </main>
 
-<div id="controls">
-  <button id="openModal">Adicionar</button>
-  <button id="exportPdf">Exportar PDF</button>
-  <select id="filtroFuncionario"><option value="all">Mostrar Todos</option></select>
-  <input type="text" id="buscaFuncionario" placeholder="Buscar por nome...">
-  <select id="viewSelect">
-    <option value="dayGridMonth">Mensal</option>
-    <option value="timeGridWeek">Semanal</option>
-    <option value="timeGridDay">Diária</option>
-  </select>
-</div>
-
-<div id="legend"></div>
-<div id="stats"></div>
-<div id="calendar-container"><div id="calendar"></div></div>
-
-<!-- Painel anual -->
-<div id="dashboardContainer">
-  <div id="controlsDashboard">
-    <button id="exportDashboardPdf">Exportar PDF</button>
-    <select id="anoSelect"></select>
-  </div>
-  <div id="legendDashboard"></div>
-  <div id="dashboard"></div>
-</div>
-
-<!-- Modal -->
-<div id="modal" class="modal">
-  <div class="modal-content">
-    <span class="close" id="closeModal">&times;</span>
-    <h3 id="modalTitle">Adicionar</h3>
-    <label>Nome do Funcionário:</label>
-    <input type="text" id="nomeFuncionario" placeholder="Ex: João">
-    <label id="labelData1">Data Início:</label>
-    <input type="date" id="dataInicio">
-    <label id="labelData2" style="display:none">Data Fim:</label>
-    <input type="date" id="dataFim" style="display:none">
-
-    <!-- Motivo da ausência -->
-    <div id="motivoContainer">
-      <label>Motivo da Ausência:</label>
-      <select id="motivoSelect">
-        <option value="">Selecione...</option>
-        <option value="Abonada">Abonada</option>
-        <option value="Horas Credoras">Horas Credoras</option>
-        <option value="Consulta Médica">Consulta Médica</option>
-      </select>
-    </div>
-
-    <button id="saveItem">Salvar</button>
-  </div>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-
-<script>
-// ---------------- VARIÁVEIS ----------------
-let activeTab = 'ausencias';
-const cores = ['#FF9999','#99CCFF','#99FF99','#FFCC99','#CC99FF','#00CED1','#FF69B4','#F4A460'];
-const coresFerias = ['#FF4500','#1E90FF','#228B22','#8B008B','#FF1493','#00008B','#8B0000','#FF8C00','#006400','#4B0082'];
-
-const corFuncionario = {};
-const corFeriasFuncionario = {};
-function atribuirCor(nome){ if(!corFuncionario[nome]){ const idx = Object.keys(corFuncionario).length % cores.length; corFuncionario[nome] = cores[idx]; } return corFuncionario[nome]; }
-function atribuirCorFerias(nome){ if(!corFeriasFuncionario[nome]){ const idx = Object.keys(corFeriasFuncionario).length % coresFerias.length; corFeriasFuncionario[nome] = coresFerias[idx]; } return corFeriasFuncionario[nome]; }
-
-// ---------------- FILTROS ----------------
-const filtroFuncionario = document.getElementById('filtroFuncionario');
-const buscaFuncionario = document.getElementById('buscaFuncionario');
-let filtroNome = 'all';
-let buscaTexto = '';
-
-// ---------------- CALENDÁRIO ----------------
-const modal = document.getElementById('modal');
-const openModalBtn = document.getElementById('openModal');
-const closeModalBtn = document.getElementById('closeModal');
-const saveItemBtn = document.getElementById('saveItem');
-const nomeInput = document.getElementById('nomeFuncionario');
-const dataInicioInput = document.getElementById('dataInicio');
-const dataFimInput = document.getElementById('dataFim');
-const labelData2 = document.getElementById('labelData2');
-const motivoSelect = document.getElementById('motivoSelect');
-const motivoContainer = document.getElementById('motivoContainer');
-
-const calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
-  initialView: 'dayGridMonth',
-  locale: 'pt-br',
-  headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
-  events: [],
-  dateClick(info){
-    modal.style.display='block';
-    nomeInput.value=''; dataInicioInput.value=info.dateStr; dataFimInput.value=''; motivoSelect.value='';
-    if(activeTab==='ferias'){ motivoContainer.style.display='none'; dataFimInput.style.display='block'; labelData2.style.display='block'; }
-    else { motivoContainer.style.display='block'; dataFimInput.style.display='none'; labelData2.style.display='none'; }
-  },
-  displayEventTime:false
-});
-calendar.render();
-
-openModalBtn.onclick = () => { modal.style.display='block'; nomeInput.value=''; dataFimInput.value=''; motivoSelect.value=''; if(activeTab==='ferias'){ motivoContainer.style.display='none'; dataFimInput.style.display='block'; labelData2.style.display='block'; } else { motivoContainer.style.display='block'; dataFimInput.style.display='none'; labelData2.style.display='none'; } };
-closeModalBtn.onclick = () => modal.style.display='none';
-window.onclick = e => { if(e.target==modal) modal.style.display='none'; };
-
-function displayEndInclusive(endStr){ if(!endStr) return null; const d = new Date(endStr+'T00:00:00'); d.setDate(d.getDate()+1); const yyyy=d.getFullYear(),mm=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'); return `${yyyy}-${mm}-${dd}`; }
-
-// ---------------- SALVAR NO GOOGLE SHEETS ----------------
-saveItemBtn.onclick = async () => {
-  const nome = nomeInput.value.trim();
-  const inicio = dataInicioInput.value;
-  const fim = dataFimInput.value || inicio;
-  const motivo = motivoSelect.value;
-  const tipo = activeTab; // 'ausencias' ou 'ferias'
-
-  if(!nome){ alert('Digite o nome do funcionário!'); return; }
-  if(!inicio){ alert('Selecione uma data!'); return; }
-  if(tipo === 'ausencias' && !motivo){ alert('Selecione o motivo da ausência!'); return; }
-
-  const evento = {
-    nome: nome,
-    data_inicio: inicio,
-    data_fim: fim,
-    motivo: motivo || '',
-    tipo: tipo
-  };
-
-  const url = "https://script.google.com/macros/s/AKfycbwbpr5lC06z6fka6pXYlNec3UPkte5zWAgDNPP9q9rmpdCVF7wjTVgr5_mraOhxBnPYfQ/exec";
-
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(evento)
-    });
-    const resultado = await resp.json();
-
-    if (resultado.status === "ok") {
-      alert("Evento salvo com sucesso!");
-      modal.style.display = "none";
-      // Atualiza o calendário visualmente
-      calendar.addEvent({ 
-        title: tipo==='ferias'?`${nome} - Férias`:`${nome} - ${motivo}`,
-        start: inicio,
-        end: fim,
-        allDay: true,
-        color: tipo==='ferias'?atribuirCorFerias(nome):atribuirCor(nome),
-        textColor: '#000'
-      });
-    } else {
-      alert("Erro ao salvar evento: " + resultado.mensagem);
-    }
-  } catch (err) {
-    alert("Erro de conexão: " + err);
-  }
-};
-
-// ---------------- TABS ----------------
-document.getElementById('tabAusencias').onclick=()=>{ activeTab='ausencias'; mudarTab('tabAusencias'); };
-document.getElementById('tabFerias').onclick=()=>{ activeTab='ferias'; mudarTab('tabFerias'); };
-document.getElementById('tabDashboard').onclick=()=>mostrarDashboard();
-function mudarTab(id){ document.querySelectorAll('.tab-button').forEach(b=>b.classList.remove('active-tab')); document.getElementById(id).classList.add('active-tab'); document.getElementById('calendar-container').style.display='block'; document.getElementById('controls').style.display='block'; document.getElementById('legend').style.display='flex'; document.getElementById('stats').style.display='flex'; document.getElementById('dashboardContainer').style.display='none'; }
-
-// ---------------- EXPORTAR PDF ----------------
-async function exportPdf(divId,nomeArquivo){ 
-  const { jsPDF } = window.jspdf; 
-  const input = document.getElementById(divId); 
-  const canvas = await html2canvas(input,{scale:2}); 
-  const img = canvas.toDataURL('image/png'); 
-  const pdf = new jsPDF('l','mm','a4'); 
-  const imgProps = pdf.getImageProperties(img); 
-  const pdfWidth = pdf.internal.pageSize.getWidth(); 
-  const pdfHeight = (imgProps.height*pdfWidth)/imgProps.width; 
-  pdf.addImage(img,'PNG',0,0,pdfWidth,pdfHeight); 
-  pdf.save(nomeArquivo); 
-}
-document.getElementById('exportPdf').onclick=()=>exportPdf('calendar-container',`${activeTab}.pdf`);
-document.getElementById('exportDashboardPdf').onclick=()=>exportPdf('dashboardContainer','Painel_Anual.pdf');
-
-</script>
+    <footer>
+        &copy; 2025 Meu Site GitHub Pages
+    </footer>
 </body>
 </html>
-Atualizando index.html
