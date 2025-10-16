@@ -23,6 +23,7 @@ button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
 .legend-item { margin:5px 10px; display:flex; align-items:center; font-size:14px; }
 .color-box { width:15px; height:15px; margin-right:5px; border:1px solid #000; }
 
+/* Painel anual */
 #dashboardContainer { display:none; }
 #dashboard { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:1200px; margin:0 auto; }
 .calendar-mini { border:1px solid #ccc; border-radius:6px; padding:5px; background:#fafafa; }
@@ -41,6 +42,7 @@ button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
 
 <div id="controls">
   <button id="openModal">Adicionar</button>
+  <button id="exportPdf">Exportar PDF</button>
   <select id="filtroFuncionario"><option value="all">Mostrar Todos</option></select>
   <input type="text" id="buscaFuncionario" placeholder="Buscar por nome...">
   <select id="viewSelect">
@@ -51,16 +53,20 @@ button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
 </div>
 
 <div id="legend"></div>
+<div id="stats"></div>
 <div id="calendar-container"><div id="calendar"></div></div>
 
+<!-- Painel anual -->
 <div id="dashboardContainer">
   <div id="controlsDashboard">
+    <button id="exportDashboardPdf">Exportar PDF</button>
     <select id="anoSelect"></select>
   </div>
   <div id="legendDashboard"></div>
   <div id="dashboard"></div>
 </div>
 
+<!-- Modal -->
 <div id="modal" class="modal">
   <div class="modal-content">
     <span class="close" id="closeModal">&times;</span>
@@ -71,6 +77,8 @@ button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
     <input type="date" id="dataInicio">
     <label id="labelData2" style="display:none">Data Fim:</label>
     <input type="date" id="dataFim" style="display:none">
+
+    <!-- Motivo da ausência -->
     <div id="motivoContainer">
       <label>Motivo da Ausência:</label>
       <select id="motivoSelect">
@@ -80,28 +88,69 @@ button, select, input { margin:5px; padding:6px 10px; font-size:14px; }
         <option value="Consulta Médica">Consulta Médica</option>
       </select>
     </div>
+
     <button id="saveItem">Salvar</button>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 
-<script>
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+/* === CONFIGURE AQUI O SEU FIREBASE === */
+const firebaseConfig = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU_DOMINIO.firebaseapp.com",
+  projectId: "SEU_PROJECT_ID",
+  storageBucket: "SEU_BUCKET.appspot.com",
+  messagingSenderId: "SENDER_ID",
+  appId: "APP_ID"
+};
+/* ==================================== */
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ---------------- VARIÁVEIS ----------------
 let activeTab = 'ausencias';
+
+// cores padrão por funcionário (ausências)
 const cores = ['#FF9999','#99CCFF','#99FF99','#FFCC99','#CC99FF','#00CED1','#FF69B4','#F4A460'];
+// cores fortes para férias (alternadas)
 const coresFerias = ['#FF4500','#1E90FF','#228B22','#8B008B','#FF1493','#00008B','#8B0000','#FF8C00','#006400','#4B0082'];
-const corFuncionario = {};
-const corFeriasFuncionario = {};
 
-function atribuirCor(nome){ if(!corFuncionario[nome]){ corFuncionario[nome]=cores[Object.keys(corFuncionario).length % cores.length]; } return corFuncionario[nome]; }
-function atribuirCorFerias(nome){ if(!corFeriasFuncionario[nome]){ corFeriasFuncionario[nome]=coresFerias[Object.keys(corFeriasFuncionario).length % coresFerias.length]; } return corFeriasFuncionario[nome]; }
+const corFuncionario = {};      // map nome -> cor (ausências)
+const corFeriasFuncionario = {}; // map nome -> cor (férias)
+function atribuirCor(nome){
+  if(!corFuncionario[nome]){
+    const idx = Object.keys(corFuncionario).length % cores.length;
+    corFuncionario[nome] = cores[idx];
+  }
+  return corFuncionario[nome];
+}
+function atribuirCorFerias(nome){
+  if(!corFeriasFuncionario[nome]){
+    const idx = Object.keys(corFeriasFuncionario).length % coresFerias.length;
+    corFeriasFuncionario[nome] = coresFerias[idx];
+  }
+  return corFeriasFuncionario[nome];
+}
 
+// ---------------- FILTROS ----------------
 const filtroFuncionario = document.getElementById('filtroFuncionario');
 const buscaFuncionario = document.getElementById('buscaFuncionario');
 let filtroNome = 'all';
 let buscaTexto = '';
-let lastEvents = [];
 
+// snapshot cache (para re-render quando filtros mudam)
+let lastSnapshot = null;
+
+// ---------------- CALENDÁRIO PRINCIPAL ----------------
 const modal = document.getElementById('modal');
 const openModalBtn = document.getElementById('openModal');
 const closeModalBtn = document.getElementById('closeModal');
@@ -119,22 +168,57 @@ const calendar = new FullCalendar.Calendar(document.getElementById('calendar'), 
   headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
   events: [],
   dateClick(info) {
-    modal.style.display='block';
-    nomeInput.value=''; dataFimInput.value=''; motivoSelect.value='';
+    modal.style.display = 'block';
+    nomeInput.value = '';
     dataInicioInput.value = info.dateStr;
-    if(activeTab==='ferias'){ motivoContainer.style.display='none'; dataFimInput.style.display='block'; labelData2.style.display='block'; }
-    else{ motivoContainer.style.display='block'; dataFimInput.style.display='none'; labelData2.style.display='none'; }
-  }
+    dataFimInput.value = '';
+    motivoSelect.value = '';
+    if (activeTab === 'ferias') {
+      motivoContainer.style.display = 'none';
+      dataFimInput.style.display = 'block';
+      labelData2.style.display = 'block';
+    } else {
+      motivoContainer.style.display = 'block';
+      dataFimInput.style.display = 'none';
+      labelData2.style.display = 'none';
+    }
+  },
+  eventClick(info) {
+    if (confirm(`Deseja remover ${info.event.title}?`)) {
+      deleteDoc(doc(db, 'events', info.event.id));
+    }
+  },
+  // evita problemas de timezone exibindo como allDay
+  displayEventTime: false
 });
 calendar.render();
 
-openModalBtn.onclick = ()=>{ modal.style.display='block'; nomeInput.value=''; dataFimInput.value=''; motivoSelect.value=''; 
-if(activeTab==='ferias'){ motivoContainer.style.display='none'; dataFimInput.style.display='block'; labelData2.style.display='block'; }
-else{ motivoContainer.style.display='block'; dataFimInput.style.display='none'; labelData2.style.display='none'; } };
-closeModalBtn.onclick = ()=>modal.style.display='none';
-window.onclick = e=>{ if(e.target==modal) modal.style.display='none'; };
+openModalBtn.onclick = () => {
+  modal.style.display = 'block';
+  nomeInput.value = ''; dataFimInput.value = '';
+  motivoSelect.value = '';
+  if(activeTab === 'ferias'){
+    motivoContainer.style.display='none';
+    dataFimInput.style.display='block'; labelData2.style.display='block';
+  } else {
+    motivoContainer.style.display='block';
+    dataFimInput.style.display='none'; labelData2.style.display='none';
+  }
+};
+closeModalBtn.onclick = () => modal.style.display='none';
+window.onclick = e => { if (e.target == modal) modal.style.display='none'; };
 
-function displayEndInclusive(endStr){ if(!endStr) return null; const d=new Date(endStr+'T00:00:00'); d.setDate(d.getDate()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+// helper: retorna ISO string do dia seguinte (para tornar end **inclusivo** na exibição)
+function displayEndInclusive(endStr){
+  // input: "2025-12-04" -> output: "2025-12-05" (ISO date)
+  if(!endStr) return null;
+  const d = new Date(endStr + 'T00:00:00'); // force local midnight
+  d.setDate(d.getDate() + 1);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 // ---------------- SALVAR EVENTO ----------------
 saveItemBtn.onclick = async () => {
@@ -142,114 +226,221 @@ saveItemBtn.onclick = async () => {
   const inicio = dataInicioInput.value;
   const fim = dataFimInput.value || inicio;
   const motivo = motivoSelect.value;
-  if(!nome) return alert('Digite o nome do funcionário!');
-  if(!inicio) return alert('Selecione uma data!');
-  if(activeTab==='ausencias' && !motivo) return alert('Selecione o motivo da ausência!');
-  const cor = activeTab==='ferias'? atribuirCorFerias(nome) : atribuirCor(nome);
-  const evento = { nome, inicio, fim, tipo:activeTab, motivo:motivo||'', cor };
+  if (!nome) return alert('Digite o nome do funcionário!');
+  if (!inicio) return alert('Selecione uma data!');
+  if (activeTab === 'ausencias' && !motivo) return alert('Selecione o motivo da ausência!');
 
-  google.script.run.withSuccessHandler(result => {
-    if(result.status==='ok'){
-      alert('Evento salvo com sucesso!');
-      modal.style.display='none';
-      nomeInput.value=''; dataInicioInput.value=''; dataFimInput.value=''; motivoSelect.value='';
-      carregarEventos();
-    } else {
-      alert('Erro ao salvar evento: '+result.message);
-    }
-  }).doPost(evento);
+  // garantimos cores atribuídas (mas armazenamos a cor para referência)
+  const cor = activeTab === 'ferias' ? atribuirCorFerias(nome) : atribuirCor(nome);
+
+  const evento = {
+    title: nome,
+    start: inicio,   // ex: "2025-11-05"
+    end: fim,        // ex: "2025-12-04" (inclusivo para o usuário)
+    tipo: activeTab, // 'ausencias' ou 'ferias'
+    motivo: motivo || '',
+    color: cor
+  };
+  await addDoc(collection(db, 'events'), evento);
+  modal.style.display = 'none';
 };
 
-// ---------------- CARREGAR EVENTOS ----------------
-async function carregarEventos(){
-  google.script.run.withSuccessHandler(data => {
-    lastEvents = data;
-    renderCalendar();
-  }).getEvents();
+// ---------------- RENDERIZAÇÃO A PARTIR DO SNAPSHOT ----------------
+function renderFromSnapshot(snapshot){
+  lastSnapshot = snapshot; // cache
+  calendar.removeAllEvents();
+
+  // atualizar select de funcionários
+  const nomesSet = new Set();
+  snapshot.forEach(docSnap => {
+    const e = docSnap.data();
+    if (e && e.title) nomesSet.add(e.title);
+  });
+  const nomes = Array.from(nomesSet).sort();
+  filtroFuncionario.innerHTML = `<option value="all">Mostrar Todos</option>`;
+  nomes.forEach(nome => filtroFuncionario.innerHTML += `<option value="${nome}">${nome}</option>`);
+
+  // adicionar todos os eventos (aplicando filtros)
+  snapshot.forEach(docSnap => {
+    const e = docSnap.data();
+    if(!e) return;
+    // filtro por funcionário
+    if(filtroNome !== 'all' && e.title !== filtroNome) return;
+    // filtro por busca
+    if(buscaTexto && !e.title.toLowerCase().includes(buscaTexto.toLowerCase())) return;
+
+    const displayTitle = e.tipo === 'ferias'
+      ? `${e.title} - Férias`
+      : (e.motivo ? `${e.title} - ${e.motivo}` : e.title);
+
+    // ajustar end para exibição (incluir último dia)
+    const displayEnd = displayEndInclusive(e.end);
+
+    calendar.addEvent({
+      id: docSnap.id,
+      title: displayTitle,
+      start: e.start,
+      end: displayEnd || undefined, // FullCalendar treats end exclusive -> usamos next day
+      allDay: true,
+      color: e.tipo === 'ferias' ? atribuirCorFerias(e.title) : (e.color || atribuirCor(e.title)),
+      textColor: '#000'
+    });
+  });
+
+  atualizarLegenda();
 }
 
-function renderCalendar(){
-  calendar.removeAllEvents();
-  const nomesSet = new Set();
-  lastEvents.forEach(e=>{ if(e.nome) nomesSet.add(e.nome); });
-  filtroFuncionario.innerHTML = '<option value="all">Mostrar Todos</option>';
-  Array.from(nomesSet).sort().forEach(n=> filtroFuncionario.innerHTML += `<option value="${n}">${n}</option>`);
-  lastEvents.forEach(e=>{
-    if(filtroNome!=='all' && e.nome!==filtroNome) return;
-    if(buscaTexto && !e.nome.toLowerCase().includes(buscaTexto.toLowerCase())) return;
-    const displayTitle = e.tipo==='ferias'? `${e.nome} - Férias` : (e.motivo? `${e.nome} - ${e.motivo}`: e.nome);
-    calendar.addEvent({ title:displayTitle, start:e.inicio, end:displayEndInclusive(e.fim), allDay:true, color:e.cor, textColor:'#000' });
+// ---------------- FIRESTORE SINGLE LISTENER ----------------
+onSnapshot(collection(db, 'events'), (snapshot) => {
+  renderFromSnapshot(snapshot);
+});
+
+// ---------------- FILTROS (sem criar novos listeners) ----------------
+filtroFuncionario.onchange = () => {
+  filtroNome = filtroFuncionario.value;
+  if(lastSnapshot) renderFromSnapshot(lastSnapshot);
+};
+buscaFuncionario.oninput = () => {
+  buscaTexto = buscaFuncionario.value.trim();
+  if(lastSnapshot) renderFromSnapshot(lastSnapshot);
+};
+
+// ---------------- LEGENDA ----------------
+function atualizarLegenda(){
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  // mostra legenda de férias com caixa padrão (vai listar nomes depois)
+  legend.insertAdjacentHTML('beforeend', `<span class="legend-item"><div class="color-box" style="background:#000"></div>Legendas:</span>`);
+  // férias coloridas por funcionário
+  const nomesFerias = Object.keys(corFeriasFuncionario);
+  if(nomesFerias.length > 0){
+    nomesFerias.forEach(nome => {
+      legend.insertAdjacentHTML('beforeend', `<span class="legend-item"><div class="color-box" style="background:${atribuirCorFerias(nome)}"></div>${nome} (Férias)</span>`);
+    });
+  }
+  // ausências
+  const nomesAusencias = Object.keys(corFuncionario).filter(n => !corFeriasFuncionario[n]);
+  Object.keys(corFuncionario).forEach(nome => {
+    legend.insertAdjacentHTML('beforeend', `<span class="legend-item"><div class="color-box" style="background:${atribuirCor(nome)}"></div>${nome}</span>`);
   });
 }
 
-filtroFuncionario.onchange = ()=>{ filtroNome=filtroFuncionario.value; renderCalendar(); };
-buscaFuncionario.oninput = ()=>{ buscaTexto=buscaFuncionario.value.trim(); renderCalendar(); };
-
 // ---------------- TABS ----------------
-document.getElementById('tabAusencias').onclick=()=>{ activeTab='ausencias'; mudarTab('tabAusencias'); };
-document.getElementById('tabFerias').onclick=()=>{ activeTab='ferias'; mudarTab('tabFerias'); };
-document.getElementById('tabDashboard').onclick=()=>mostrarDashboard();
+document.getElementById('tabAusencias').onclick = () => { activeTab='ausencias'; mudarTab('tabAusencias'); };
+document.getElementById('tabFerias').onclick = () => { activeTab='ferias'; mudarTab('tabFerias'); };
+document.getElementById('tabDashboard').onclick = () => mostrarDashboard();
 
-function mudarTab(id){ document.querySelectorAll('.tab-button').forEach(b=>b.classList.remove('active-tab')); document.getElementById(id).classList.add('active-tab'); 
-document.getElementById('calendar-container').style.display='block'; document.getElementById('controls').style.display='block'; document.getElementById('legend').style.display='flex';
-document.getElementById('dashboardContainer').style.display='none'; atualizarLegenda(); }
-
-function atualizarLegenda(){
-  const legend=document.getElementById('legend'); legend.innerHTML='';
-  const nomesFerias = Array.from(new Set(lastEvents.filter(e=>e.tipo==='ferias').map(e=>e.nome)));
-  nomesFerias.forEach(nome=>legend.insertAdjacentHTML('beforeend',`<span class="legend-item"><div class="color-box" style="background:${atribuirCorFerias(nome)}"></div>${nome} (Férias)</span>`));
-  const nomesAusencias = Array.from(new Set(lastEvents.filter(e=>e.tipo==='ausencias').map(e=>e.nome)));
-  nomesAusencias.forEach(nome=>legend.insertAdjacentHTML('beforeend',`<span class="legend-item"><div class="color-box" style="background:${atribuirCor(nome)}"></div>${nome}</span>`));
+function mudarTab(id){
+  document.querySelectorAll('.tab-button').forEach(b=>b.classList.remove('active-tab'));
+  document.getElementById(id).classList.add('active-tab');
+  document.getElementById('calendar-container').style.display='block';
+  document.getElementById('controls').style.display='block';
+  document.getElementById('legend').style.display='flex';
+  document.getElementById('stats').style.display='flex';
+  document.getElementById('dashboardContainer').style.display='none';
 }
 
-// ---------------- DASHBOARD ----------------
-const dashboard=document.getElementById('dashboard');
-const legendDashboard=document.getElementById('legendDashboard');
-const anoSelect=document.getElementById('anoSelect');
-const currentYear=new Date().getFullYear();
-for(let y=currentYear-2;y<=currentYear+1;y++){ let opt=document.createElement('option'); opt.value=y; opt.text=y; if(y===currentYear) opt.selected=true; anoSelect.appendChild(opt); }
+// ---------------- PAINEL ANUAL ----------------
+const dashboard = document.getElementById('dashboard');
+const legendDashboard = document.getElementById('legendDashboard');
+const anoSelect = document.getElementById('anoSelect');
+const currentYear = new Date().getFullYear();
+for(let y=currentYear-2;y<=currentYear+1;y++){
+  let opt=document.createElement('option');
+  opt.value=y; opt.text=y; if(y===currentYear) opt.selected=true;
+  anoSelect.appendChild(opt);
+}
 
 function mostrarDashboard(){
-  document.querySelectorAll('.tab-button').forEach(b=>b.classList.remove('active-tab')); document.getElementById('tabDashboard').classList.add('active-tab');
-  document.getElementById('calendar-container').style.display='none'; document.getElementById('controls').style.display='none'; document.getElementById('legend').style.display='none';
-  document.getElementById('dashboardContainer').style.display='block'; criarDashboard(parseInt(anoSelect.value));
+  document.querySelectorAll('.tab-button').forEach(b=>b.classList.remove('active-tab'));
+  document.getElementById('tabDashboard').classList.add('active-tab');
+  document.getElementById('calendar-container').style.display='none';
+  document.getElementById('controls').style.display='none';
+  document.getElementById('legend').style.display='none';
+  document.getElementById('stats').style.display='none';
+  document.getElementById('dashboardContainer').style.display='block';
+  criarDashboard(parseInt(anoSelect.value));
 }
 
-let calendars=[];
+let calendars = [];
 function criarDashboard(ano){
   dashboard.innerHTML=''; calendars=[];
   const meses=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   meses.forEach((mes,i)=>{
-    const div=document.createElement('div'); div.className='calendar-mini'; div.innerHTML=`<div class="month-title">${mes} ${ano}</div><div id="mini${i}"></div>`;
+    const div=document.createElement('div');
+    div.className='calendar-mini';
+    div.innerHTML=`<div class="month-title">${mes} ${ano}</div><div id="mini${i}"></div>`;
     dashboard.appendChild(div);
-    const calEl=document.getElementById(`mini${i}`);
-    const cal=new FullCalendar.Calendar(calEl,{initialView:'dayGridMonth',locale:'pt-br',headerToolbar:false,height:220,events:[]});
-    cal.gotoDate(`${ano}-${String(i+1).padStart(2,'0')}-01`); cal.render(); calendars.push(cal);
+    const calEl = document.getElementById(`mini${i}`);
+    const cal = new FullCalendar.Calendar(calEl,{initialView:'dayGridMonth',locale:'pt-br',headerToolbar:false,height:220,events:[]});
+    cal.gotoDate(`${ano}-${String(i+1).padStart(2,'0')}-01`);
+    cal.render();
+    calendars.push(cal);
   });
   carregarEventosDashboard(ano);
 }
 
 function carregarEventosDashboard(ano){
-  calendars.forEach(cal=>cal.removeAllEvents());
-  lastEvents.forEach(e=>{
-    const inicio=new Date(e.inicio+'T00:00:00'); const fim=new Date(e.fim+'T00:00:00'); fim.setDate(fim.getDate()+1);
+  // usamos lastSnapshot para evitar criar listener duplicado
+  if(!lastSnapshot) return;
+  calendars.forEach(cal => cal.removeAllEvents());
+  lastSnapshot.forEach(docSnap => {
+    const e = docSnap.data();
+    if(!e) return;
+    const inicio = new Date(e.start + 'T00:00:00');
+    const fim = new Date(e.end + 'T00:00:00');
+    // para exibição no dashboard também usamos end +1 dia
+    const fimExib = new Date(fim);
+    fimExib.setDate(fimExib.getDate() + 1);
+
+    // para cada mês do ano, se o evento intersecta o mês -> adiciona no mini calendar
     for(let m=0;m<12;m++){
-      const primeiroDia=new Date(ano,m,1); const ultimoDia=new Date(ano,m+1,0);
-      if(fim>=primeiroDia && inicio<=ultimoDia){
-        const cal=calendars[m];
-        cal.addEvent({ title:e.tipo==='ferias'? `${e.nome} - Férias` : (e.motivo?`${e.nome} - ${e.motivo}`: e.nome),
-          start:e.inicio, end:displayEndInclusive(e.fim), allDay:true, color:e.cor, textColor:'#000' });
+      const primeiroDia = new Date(ano, m, 1, 0,0,0);
+      const ultimoDia = new Date(ano, m+1, 0, 23,59,59);
+      if(fimExib >= primeiroDia && inicio <= ultimoDia){
+        const cal = calendars[m];
+        if(!cal) continue;
+        cal.addEvent({
+          title: e.tipo === 'ferias' ? `${e.title} - Férias` : (e.motivo ? `${e.title} - ${e.motivo}` : e.title),
+          start: e.start,
+          end: displayEndInclusive(e.end),
+          allDay: true,
+          color: e.tipo === 'ferias' ? atribuirCorFerias(e.title) : (e.color || atribuirCor(e.title)),
+          textColor: '#000'
+        });
       }
     }
   });
-  legendDashboard.innerHTML='';
-  Array.from(new Set(lastEvents.map(e=>e.nome))).sort().forEach(nome=> legendDashboard.innerHTML += `<span class="legend-item"><div class="color-box" style="background:${atribuirCorFerias(nome)}"></div>${nome}</span>`);
+  atualizarLegendaDashboard();
 }
 
-anoSelect.onchange=()=> criarDashboard(parseInt(anoSelect.value));
+function atualizarLegendaDashboard(){
+  legendDashboard.innerHTML = '';
+  if(!lastSnapshot) return;
+  const nomes = new Set();
+  lastSnapshot.forEach(d => { const e = d.data(); if(e && e.title) nomes.add(e.title); });
+  Array.from(nomes).sort().forEach(nome => {
+    legendDashboard.innerHTML += `<span class="legend-item"><div class="color-box" style="background:${atribuirCorFerias(nome)}"></div>${nome}</span>`;
+  });
+}
 
-// ---------------- INICIAL ----------------
-carregarEventos();
+anoSelect.onchange = () => criarDashboard(parseInt(anoSelect.value));
+
+// ---------------- EXPORTAR PDF ----------------
+async function exportPdf(divId,nomeArquivo){
+  const { jsPDF } = window.jspdf;
+  const input = document.getElementById(divId);
+  const canvas = await html2canvas(input,{scale:2});
+  const img = canvas.toDataURL('image/png');
+  const pdf = new jsPDF('l','mm','a4');
+  const imgProps = pdf.getImageProperties(img);
+  const pdfWidth = pdf.internal.pageSize.getWidth();
+  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+  pdf.addImage(img,'PNG',0,0,pdfWidth,pdfHeight);
+  pdf.save(nomeArquivo);
+}
+document.getElementById('exportPdf').onclick = () => exportPdf('calendar-container','Eventos.pdf');
+document.getElementById('exportDashboardPdf').onclick = () => exportPdf('dashboardContainer','Painel_Anual.pdf');
 
 </script>
 </body>
